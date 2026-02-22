@@ -55,10 +55,16 @@ async def _async_main() -> None:
         metavar="ADDR_OR_NAME",
         help="Skip the device picker. Pass a full Bluetooth address or exact device name (case-insensitive).",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress all output except errors.",
+    )
     args = parser.parse_args()
 
     # ── Scan ──────────────────────────────────────────────────────────────
-    print(f"Scanning for BLE devices ({args.timeout:.0f} s)…")
+    if not args.quiet:
+        print(f"Scanning for BLE devices ({args.timeout:.0f} s)…")
     raw_scan = await BleakScanner.discover(timeout=args.timeout, return_adv=True, **_CB_MACOS)
 
     # Prefer the live advertisement name over the cached device.name so that after a
@@ -88,7 +94,8 @@ async def _async_main() -> None:
             sys.exit(1)
 
         selected, selected_name = matches[0]
-        print(f"Selected: {selected_name}  ({selected.address})")
+        if not args.quiet:
+            print(f"Selected: {selected_name}  ({selected.address})")
 
     else:
         print(f"\nFound {len(devices)} device(s):")
@@ -132,16 +139,18 @@ async def _async_main() -> None:
     def on_log(msg: str) -> None:
         print(f"  {msg}", flush=True)
 
-    print()
+    if not args.quiet:
+        print()
     try:
         await perform_dfu(
             args.zip_path,
             selected,  # BLEDevice
-            on_progress=on_progress,
-            on_log=on_log,
+            on_progress=None if args.quiet else on_progress,
+            on_log=None if args.quiet else on_log,
             packets_per_notification=args.prn,
         )
-        print("\nUpdate complete.")
+        if not args.quiet:
+            print("\nUpdate complete.")
     except KeyboardInterrupt:
         print("\nAborted.")
         sys.exit(0)
