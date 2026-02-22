@@ -18,7 +18,8 @@ import argparse
 import asyncio
 import sys
 
-from bleak import BleakScanner, BLEDevice
+from bleak import BleakScanner
+from bleak.backends.device import BLEDevice
 
 from . import perform_dfu
 from .dfu import DeviceNotFoundError, DFUError

@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import Callable
+from typing import Any
 
-from bleak import BleakClient, BleakError, BleakScanner, BLEDevice
+from bleak import BleakClient, BleakScanner
+from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 
 from .dfu import (
     BUTTONLESS_CP_UUID,
@@ -20,7 +23,7 @@ from .dfu import (
 
 # On macOS, retrieve real Bluetooth MAC addresses via the private IOBluetooth API so
 # app-mode and DFU-mode devices are distinct CBPeripheral objects (no GATT cache clash).
-_CB_MACOS: dict = {"cb": {"use_bdaddr": True}} if sys.platform == "darwin" else {}
+_CB_MACOS: dict[str, Any] = {"cb": {"use_bdaddr": True}} if sys.platform == "darwin" else {}
 
 
 async def scan_for_devices(timeout: float = 5.0) -> list[BLEDevice]:

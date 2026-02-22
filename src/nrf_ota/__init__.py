@@ -14,8 +14,11 @@ from __future__ import annotations
 import asyncio
 import sys
 from collections.abc import Callable
+from typing import Any, cast
 
-from bleak import BleakClient, BleakError, BleakScanner, BLEDevice
+from bleak import BleakClient, BleakScanner
+from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
 
 from .dfu import (
     LEGACY_DFU_SERVICE_UUID,
@@ -35,7 +38,7 @@ from .scan import find_dfu_target, scan_for_devices, trigger_bootloader
 # (AA:BB:CC:DD:EE:FF) and DFU-mode (AA:BB:CC:DD:EE:00) are treated as distinct
 # CBPeripheral objects, eliminating GATT service handle cache pollution across the
 # app→DFU reboot.  The Nordic MAC+1 discovery logic also works correctly on macOS.
-_CB_MACOS: dict = {"cb": {"use_bdaddr": True}} if sys.platform == "darwin" else {}
+_CB_MACOS: dict[str, Any] = {"cb": {"use_bdaddr": True}} if sys.platform == "darwin" else {}
 
 # macOS CoreBluetooth write-without-response flow control rejects firmware
 # transfers at PRN≥10 (status 0x06).  PRN=8 is confirmed stable on macOS.
@@ -174,8 +177,8 @@ async def _resolve_address(address: str, on_log: LogCallback | None = None) -> B
             await asyncio.sleep(1.0)
         devices = await BleakScanner.discover(timeout=3, **_CB_MACOS)
         for d in devices:
-            if d.address.upper() == address.upper():
-                return d
+            if cast(BLEDevice, d).address.upper() == address.upper():
+                return cast(BLEDevice, d)
         log(f"Device not found in scan (attempt {attempt + 1}/5)…")
     raise DeviceNotFoundError(f"Could not locate device with address {address}")
 
