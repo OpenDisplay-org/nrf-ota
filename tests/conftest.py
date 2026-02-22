@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -9,16 +10,29 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bleak import BleakClient
 
-from nrf_ota.dfu import LegacyDFU
+from nrf_ota.dfu import LegacyDFU, _crc16_ccitt
+
+_FIRMWARE = b"\xde\xad\xbe\xef" * 64
+_INIT_PACKET = b"\x01\x02\x03\x04"
 
 
 @pytest.fixture
 def dfu_zip(tmp_path: Path) -> Path:
-    """A minimal but valid Nordic DFU ZIP containing dummy .bin and .dat files."""
+    """A minimal but valid Nordic DFU ZIP with manifest, .bin, and .dat."""
     zip_path = tmp_path / "firmware.zip"
+    manifest = json.dumps({
+        "manifest": {
+            "application": {
+                "bin_file": "application.bin",
+                "dat_file": "application.dat",
+                "init_packet_data": {"firmware_crc16": _crc16_ccitt(_FIRMWARE)},
+            }
+        }
+    })
     with zipfile.ZipFile(zip_path, "w") as z:
-        z.writestr("application.bin", b"\xde\xad\xbe\xef" * 64)
-        z.writestr("application.dat", b"\x01\x02\x03\x04")
+        z.writestr("manifest.json", manifest)
+        z.writestr("application.bin", _FIRMWARE)
+        z.writestr("application.dat", _INIT_PACKET)
     return zip_path
 
 

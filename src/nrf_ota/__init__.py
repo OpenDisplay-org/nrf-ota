@@ -89,8 +89,11 @@ async def perform_dfu(
     log: Callable[[str], None] = on_log or (lambda _: None)
 
     # ── 1. Parse firmware ZIP ──────────────────────────────────────────────
-    init_packet, firmware = parse_dfu_zip(zip_path)
-    log(f"Firmware: {len(firmware):,} bytes  |  init packet: {len(init_packet)} bytes")
+    info = parse_dfu_zip(zip_path)
+    init_packet, firmware = info.init_packet, info.firmware
+    ver_str = f" — v{info.app_version}" if info.app_version is not None else ""
+    crc_str = f" — CRC {info.crc16:#06x} ✓" if info.crc16 is not None else ""
+    log(f"Firmware: {info.bin_file} ({len(firmware):,} bytes){ver_str}{crc_str}")
 
     # ── 2. Resolve address string → BLEDevice ─────────────────────────────
     ble_device: BLEDevice | None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,24 +44,50 @@ def fire_notify(dfu_instance: LegacyDFU, data: bytes, delay: float = 0.01) -> as
 
 
 def test_parse_dfu_zip_returns_dat_and_bin(dfu_zip: Path) -> None:
-    init_packet, firmware = parse_dfu_zip(str(dfu_zip))
-    assert init_packet == b"\x01\x02\x03\x04"
-    assert firmware == b"\xde\xad\xbe\xef" * 64
+    info = parse_dfu_zip(str(dfu_zip))
+    assert info.init_packet == b"\x01\x02\x03\x04"
+    assert info.firmware == b"\xde\xad\xbe\xef" * 64
+    assert info.bin_file == "application.bin"
+    assert info.crc16 is not None
 
 
-def test_parse_dfu_zip_missing_bin(tmp_path: Path) -> None:
-    zip_path = tmp_path / "no_bin.zip"
+def test_parse_dfu_zip_no_manifest(tmp_path: Path) -> None:
+    zip_path = tmp_path / "no_manifest.zip"
     with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("application.bin", b"\x01")
         z.writestr("application.dat", b"\x01")
-    with pytest.raises(DFUError, match=".bin"):
+    with pytest.raises(DFUError, match="manifest.json"):
         parse_dfu_zip(str(zip_path))
 
 
-def test_parse_dfu_zip_missing_dat(tmp_path: Path) -> None:
-    zip_path = tmp_path / "no_dat.zip"
+def test_parse_dfu_zip_missing_bin(tmp_path: Path) -> None:
+    """Manifest references a .bin that isn't in the archive."""
+    zip_path = tmp_path / "no_bin.zip"
+    manifest = json.dumps({"manifest": {"application": {"bin_file": "app.bin", "dat_file": "app.dat"}}})
     with zipfile.ZipFile(zip_path, "w") as z:
-        z.writestr("application.bin", b"\x01")
-    with pytest.raises(DFUError, match=".dat"):
+        z.writestr("manifest.json", manifest)
+        z.writestr("app.dat", b"\x01")
+    with pytest.raises(DFUError, match="not in the archive"):
+        parse_dfu_zip(str(zip_path))
+
+
+def test_parse_dfu_zip_crc_mismatch(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bad_crc.zip"
+    firmware = b"\xde\xad\xbe\xef" * 64
+    manifest = json.dumps({
+        "manifest": {
+            "application": {
+                "bin_file": "app.bin",
+                "dat_file": "app.dat",
+                "init_packet_data": {"firmware_crc16": 0xDEAD},
+            }
+        }
+    })
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("manifest.json", manifest)
+        z.writestr("app.bin", firmware)
+        z.writestr("app.dat", b"\x01\x02\x03\x04")
+    with pytest.raises(DFUError, match="CRC mismatch"):
         parse_dfu_zip(str(zip_path))
 
 
