@@ -144,12 +144,9 @@ async def find_dfu_target(
     byte of the original Bluetooth MAC is incremented by 1 (wrapping at 0xFF).
     Example: ``AA:BB:CC:DD:EE:FF`` → ``AA:BB:CC:DD:EE:00``.
 
-    On macOS and iOS, the OS hides real MAC addresses and exposes UUID-style
-    identifiers instead, so the MAC+1 trick won't work there.  However, macOS
-    keeps the same UUID stable across a reboot into bootloader mode, so we can
-    still match by the original address.  Name matching (``"DFU"`` in name)
-    serves as an additional fallback for Linux/Windows bootloaders that change
-    their name.
+    On all platforms real MAC addresses are used (macOS via ``use_bdaddr=True``),
+    so the MAC+1 trick works everywhere.  Name and service-UUID matching serve
+    as additional fallbacks for bootloaders that change their address.
 
     Args:
         original_address: Bluetooth address of the application-mode device.
