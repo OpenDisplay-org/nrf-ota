@@ -1,10 +1,10 @@
-# nrf-ota
-
-Python package for OTA updating the bootloader on nrf chips
-
 [![Tests](https://github.com/OpenDisplay-org/nrf-ota/actions/workflows/test.yml/badge.svg)](https://github.com/OpenDisplay-org/nrf-ota/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/nrf-ota)](https://pypi.org/project/nrf-ota/)
 [![Python Version](https://img.shields.io/pypi/pyversions/nrf-ota)](https://pypi.org/project/nrf-ota/)
+
+# nrf-ota
+
+Flash firmware to Nordic nRF5x devices over BLE from Python. Implements the **Nordic Legacy DFU** protocol (nRF5 SDK ≤ 15.x) and works on Linux, macOS, and Windows.
 
 ## Installation
 
@@ -12,85 +12,74 @@ Python package for OTA updating the bootloader on nrf chips
 pip install nrf-ota
 ```
 
-## Quick Start
+## CLI
 
-```python
-# TODO: Add a simple usage example
-import nrf_ota
+No install required — run directly with [uvx](https://docs.astral.sh/uv/):
 
-# Example usage here
+```bash
+uvx nrf-ota firmware.zip
 ```
 
-## Features
+Scans for nearby BLE devices, lets you pick one, and flashes the firmware. If the device is running application firmware the bootloader is triggered automatically.
 
-<!-- TODO: List key features -->
-- Feature 1
-- Feature 2
-- Feature 3
-
-## Usage
-
-### Basic Example
+## Library
 
 ```python
-# TODO: Add detailed usage examples
+import asyncio
+from nrf_ota import perform_dfu, scan_for_devices
+
+async def main():
+    devices = await scan_for_devices(timeout=5.0)
+
+    await perform_dfu(
+        "firmware.zip",
+        devices[0],
+        on_progress=lambda pct: print(f"\r{pct:.0f}%", end=""),
+        on_log=print,
+    )
+
+asyncio.run(main())
 ```
 
-### Advanced Usage
+## API
 
-<!-- TODO: Document advanced features -->
+### `perform_dfu(zip_path, device, *, on_progress=None, on_log=None, packets_per_notification=...)`
 
-## API Reference
+Performs a full OTA update — triggers the bootloader if needed, waits for the device to reboot into DFU mode, transfers the firmware, and activates it.
 
-<!-- TODO: Document main classes, functions, and parameters -->
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `zip_path` | `str` | Path to the Nordic DFU ZIP file |
+| `device` | `BLEDevice \| str` | Device from `scan_for_devices`, or a raw Bluetooth address |
+| `on_progress` | `Callable[[float], None]` | Called with percentage (0–100) as firmware is sent |
+| `on_log` | `Callable[[str], None]` | Called with status messages |
+| `packets_per_notification` | `int` | Packets sent per receipt notification. Default: **8 on macOS**, 10 elsewhere. |
+
+Raises `DFUError` on failure, `DeviceNotFoundError` if the bootloader can't be found after reboot.
+
+### `scan_for_devices(timeout=5.0) -> list[BLEDevice]`
+
+Scans for nearby named BLE devices and returns a list of `bleak.BLEDevice` objects.
+
+### Exceptions
+
+| Exception | Description |
+|-----------|-------------|
+| `DFUError` | Base exception for all DFU failures |
+| `DeviceNotFoundError` | Bootloader not found after reboot |
+
+## Platform notes
+
+Works on Linux, macOS, and Windows via [bleak](https://github.com/hbldh/bleak). On macOS, the default `packets_per_notification` is lowered to 8 (from 10) to stay within CoreBluetooth's write-without-response flow control limits.
 
 ## Development
 
-### Setup
-
 ```bash
-# Clone the repository
 git clone https://github.com/OpenDisplay-org/nrf-ota.git
 cd nrf-ota
-
-# Install with all dependencies
 uv sync --all-extras
-```
 
-### Running Tests
-
-```bash
-# Run all tests
 uv run pytest tests/ -v
-
-# Run with coverage
-uv run pytest tests/ --cov=src/nrf_ota
-
-# Run specific test file
-uv run pytest tests/test_specific.py -v
-```
-
-### Code Quality
-
-```bash
-# Lint code
 uv run ruff check .
-
-# Format code (if ruff format is configured)
-uv run ruff format .
-
-# Type check
 uv run mypy src/nrf_ota
 ```
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests and linting
-5. Commit using conventional commits (`feat:`, `fix:`, etc.)
-6. Push to your fork
-7. Open a Pull Request

@@ -13,29 +13,34 @@ authors = [
     {name = "g4bri3lDev", email = "admin@g4bri3l.de"}
 ]
 
-keywords = []  # TODO: Add relevant keywords
+keywords = ["bluetooth", "ble", "nrf", "nordic", "dfu", "ota", "firmware"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Hardware",
 ]
 
-# TODO: Add your runtime dependencies here
-dependencies = []
+dependencies = ["bleak>=0.21.0"]
 
 [project.optional-dependencies]
 test = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
-    # Uncomment if using async: "pytest-asyncio>=1.3.0",
+    "pytest-asyncio>=0.23.0",
 ]
 dev = [
     "mypy>=1.19.1",
     "ruff>=0.14.10"
 ]
+
+[project.scripts]
+nrf-ota = "nrf_ota.__main__:main"
 
 [project.urls]
 Homepage = "https://opendisplay.org"
@@ -60,4 +65,4 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Uncomment if using async tests: asyncio_mode = "auto"
+asyncio_mode = "auto"

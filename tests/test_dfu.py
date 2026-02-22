@@ -1,0 +1,232 @@
+"""Unit tests for nrf_ota.dfu — no BLE hardware required."""
+
+from __future__ import annotations
+
+import asyncio
+import zipfile
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from bleak.backends.scanner import AdvertisementData
+
+from nrf_ota.dfu import LEGACY_DFU_SERVICE_UUID, DeviceNotFoundError, DFUError, LegacyDFU, parse_dfu_zip
+from nrf_ota.scan import find_dfu_target
+
+
+def make_adv_data(
+    local_name: str | None = None,
+    service_uuids: list[str] | None = None,
+) -> AdvertisementData:
+    return AdvertisementData(
+        local_name=local_name,
+        manufacturer_data={},
+        service_data={},
+        service_uuids=service_uuids or [],
+        tx_power=None,
+        rssi=-60,
+        platform_data=(),
+    )
+
+
+def fire_notify(dfu_instance: LegacyDFU, data: bytes, delay: float = 0.01) -> asyncio.Task[None]:
+    """Schedule a simulated Control Point notification on *dfu_instance*."""
+
+    async def _fire() -> None:
+        await asyncio.sleep(delay)
+        dfu_instance._on_notify(None, bytearray(data))
+
+    return asyncio.ensure_future(_fire())
+
+
+# ── parse_dfu_zip ─────────────────────────────────────────────────────────────
+
+
+def test_parse_dfu_zip_returns_dat_and_bin(dfu_zip: Path) -> None:
+    init_packet, firmware = parse_dfu_zip(str(dfu_zip))
+    assert init_packet == b"\x01\x02\x03\x04"
+    assert firmware == b"\xde\xad\xbe\xef" * 64
+
+
+def test_parse_dfu_zip_missing_bin(tmp_path: Path) -> None:
+    zip_path = tmp_path / "no_bin.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("application.dat", b"\x01")
+    with pytest.raises(DFUError, match=".bin"):
+        parse_dfu_zip(str(zip_path))
+
+
+def test_parse_dfu_zip_missing_dat(tmp_path: Path) -> None:
+    zip_path = tmp_path / "no_dat.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("application.bin", b"\x01")
+    with pytest.raises(DFUError, match=".dat"):
+        parse_dfu_zip(str(zip_path))
+
+
+def test_parse_dfu_zip_bad_zip(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"not a zip file at all")
+    with pytest.raises(DFUError, match="Invalid ZIP"):
+        parse_dfu_zip(str(bad))
+
+
+def test_parse_dfu_zip_missing_file() -> None:
+    with pytest.raises(FileNotFoundError):
+        parse_dfu_zip("/nonexistent/path/firmware.zip")
+
+
+# ── LegacyDFU.read_version ────────────────────────────────────────────────────
+
+
+async def test_read_version_returns_major_minor(dfu: LegacyDFU) -> None:
+    # mock_ble_client returns b"\x06\x01" → little-endian u16 = 0x0106
+    major, minor = await dfu.read_version()
+    assert major == 1
+    assert minor == 6
+
+
+# ── LegacyDFU.start_dfu ───────────────────────────────────────────────────────
+
+
+async def test_start_dfu_success(dfu: LegacyDFU) -> None:
+    # Response: opcode=0x10, request=START_DFU(0x01), status=0x01 (success)
+    fire_notify(dfu, b"\x10\x01\x01")
+    await dfu.start()
+    await dfu.start_dfu(image_size=256)
+    # No exception → success
+
+
+async def test_start_dfu_bad_status(dfu: LegacyDFU) -> None:
+    fire_notify(dfu, b"\x10\x01\x04")  # status 0x04 = invalid state
+    await dfu.start()
+    with pytest.raises(DFUError, match="Start DFU failed"):
+        await dfu.start_dfu(image_size=256)
+
+
+async def test_start_dfu_short_response(dfu: LegacyDFU) -> None:
+    fire_notify(dfu, b"\x10")  # too short
+    await dfu.start()
+    with pytest.raises(DFUError, match="Start DFU failed"):
+        await dfu.start_dfu(image_size=256)
+
+
+# ── LegacyDFU._wait_for_response timeout ─────────────────────────────────────
+
+
+async def test_wait_for_response_timeout(dfu: LegacyDFU) -> None:
+    """Set a tiny response timeout so no notification → DFUError quickly."""
+    dfu._response_timeout = 0.05  # 50 ms — fast for CI
+
+    await dfu.start()
+    with pytest.raises(DFUError, match="Timeout"):
+        await dfu._wait_for_response()
+
+
+# ── LegacyDFU callbacks ───────────────────────────────────────────────────────
+
+
+async def test_on_progress_called(dfu_zip: Path, mock_ble_client: MagicMock) -> None:
+    progress_calls: list[float] = []
+    instance = LegacyDFU(mock_ble_client, on_progress=progress_calls.append)
+
+    # Simulate the full send_firmware happy path with a tiny firmware blob
+    firmware = b"\xAA" * 20  # exactly one chunk
+
+    # Set up sequential notifications:
+    # 1. receipt notification (0x11) after PRN packets — skipped since 1 chunk < PRN=30
+    # 2. final response: opcode=0x10, RECEIVE_FW, status=0x01
+    fire_notify(instance, b"\x10\x03\x01", delay=0.05)
+
+    # Also fire the validate response
+    import asyncio
+
+    async def fire_validate() -> None:
+        await asyncio.sleep(0.15)
+        instance._on_notify(None, bytearray(b"\x10\x04\x01"))
+
+    asyncio.ensure_future(fire_validate())
+
+    await instance.start()
+    await instance.send_firmware(firmware)
+
+    assert len(progress_calls) >= 1
+    assert progress_calls[-1] == pytest.approx(100.0)
+
+
+async def test_on_log_called(mock_ble_client: MagicMock) -> None:
+    logs: list[str] = []
+    instance = LegacyDFU(mock_ble_client, on_log=logs.append)
+
+    fire_notify(instance, b"\x10\x03\x01", delay=0.05)
+
+    import asyncio
+
+    async def fire_validate() -> None:
+        await asyncio.sleep(0.15)
+        instance._on_notify(None, bytearray(b"\x10\x04\x01"))
+
+    asyncio.ensure_future(fire_validate())
+
+    await instance.start()
+    await instance.send_firmware(b"\xBB" * 20)
+
+    assert any("Sending firmware" in msg for msg in logs)
+
+
+# ── find_dfu_target ───────────────────────────────────────────────────────────
+
+
+def _make_ble_device(address: str, name: str | None) -> MagicMock:
+    d = MagicMock()
+    d.address = address
+    d.name = name
+    return d
+
+
+async def test_find_dfu_target_mac_plus_one() -> None:
+    """Matches a device whose address is original MAC + 1 on last byte."""
+    dfu_device = _make_ble_device("AA:BB:CC:DD:EE:02", "DfuTarg")
+    adv = make_adv_data(local_name="DfuTarg")
+    discover_result = {"AA:BB:CC:DD:EE:02": (dfu_device, adv)}
+    with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value=discover_result)):
+        result = await find_dfu_target("AA:BB:CC:DD:EE:01", timeout=5.0)
+    assert result.address == "AA:BB:CC:DD:EE:02"
+
+
+async def test_find_dfu_target_macos_uuid_same_address() -> None:
+    """On macOS, UUID address is stable across reboot — match by same address."""
+    uuid_addr = "12345678-0000-0000-0000-AABBCCDDEEFF"
+    dfu_device = _make_ble_device(uuid_addr, "OD355226")  # cached name unchanged after reboot
+    adv = make_adv_data(local_name="AdaDFU")  # live advertisement shows bootloader name
+    discover_result = {uuid_addr: (dfu_device, adv)}
+    with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value=discover_result)):
+        result = await find_dfu_target(uuid_addr, timeout=5.0)
+    assert result.address == uuid_addr
+
+
+async def test_find_dfu_target_name_fallback() -> None:
+    """Live advertisement name 'DFU' matches even when cached device.name gives no hint."""
+    dfu_device = _make_ble_device("AA:BB:CC:DD:EE:FF", "ODC9D54")  # stale cached name
+    adv = make_adv_data(local_name="DfuTarg")  # live advertisement says DFU
+    discover_result = {"AA:BB:CC:DD:EE:FF": (dfu_device, adv)}
+    with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value=discover_result)):
+        result = await find_dfu_target("AA:BB:CC:DD:EE:00", timeout=5.0)  # MAC doesn't match
+    assert result.address == "AA:BB:CC:DD:EE:FF"
+
+
+async def test_find_dfu_target_service_uuid_match() -> None:
+    """Matches on Legacy DFU service UUID even when neither address nor name gives a hint."""
+    dfu_device = _make_ble_device("AA:BB:CC:DD:EE:FF", "ODC9D54")  # cached app-mode name
+    adv = make_adv_data(local_name=None, service_uuids=[LEGACY_DFU_SERVICE_UUID])
+    discover_result = {"AA:BB:CC:DD:EE:FF": (dfu_device, adv)}
+    with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value=discover_result)):
+        result = await find_dfu_target("SOME-UUID-THAT-WONT-MATCH", timeout=5.0)
+    assert result.address == "AA:BB:CC:DD:EE:FF"
+
+
+async def test_find_dfu_target_not_found() -> None:
+    """Raises DeviceNotFoundError if the scan window expires."""
+    with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value={})):
+        with pytest.raises(DeviceNotFoundError):
+            await find_dfu_target("AA:BB:CC:DD:EE:01", timeout=0.1)

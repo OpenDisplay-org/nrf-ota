@@ -1,32 +1,40 @@
 """Pytest configuration and shared fixtures."""
 
-# TODO: Add your shared test fixtures here
-# Uncomment the import when you create your first fixture:
-# import pytest
-#
-# Fixtures are reusable setup code for tests. Use them to:
-# - Create test data that multiple tests need
-# - Set up and tear down resources (files, databases, connections)
-# - Mock external dependencies
-#
-# Example fixtures:
-#
-# @pytest.fixture
-# def sample_data():
-#     """Provide sample data for tests."""
-#     return {"key": "value"}
-#
-# @pytest.fixture
-# def temp_file(tmp_path):
-#     """Create a temporary file for testing."""
-#     file = tmp_path / "test.txt"
-#     file.write_text("test content")
-#     return file
-#
-# For async tests (requires pytest-asyncio in test dependencies):
-# @pytest.fixture
-# async def async_client():
-#     """Provide async test client."""
-#     client = await create_client()
-#     yield client
-#     await client.close()
+from __future__ import annotations
+
+import zipfile
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from bleak import BleakClient
+
+from nrf_ota.dfu import LegacyDFU
+
+
+@pytest.fixture
+def dfu_zip(tmp_path: Path) -> Path:
+    """A minimal but valid Nordic DFU ZIP containing dummy .bin and .dat files."""
+    zip_path = tmp_path / "firmware.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("application.bin", b"\xde\xad\xbe\xef" * 64)
+        z.writestr("application.dat", b"\x01\x02\x03\x04")
+    return zip_path
+
+
+@pytest.fixture
+def mock_ble_client() -> MagicMock:
+    """A MagicMock of BleakClient with async GATT methods stubbed out."""
+    client = MagicMock(spec=BleakClient)
+    client.write_gatt_char = AsyncMock()
+    client.read_gatt_char = AsyncMock(return_value=bytearray(b"\x06\x01"))  # version 6.1
+    client.start_notify = AsyncMock()
+    client.is_connected = True
+    client.services = []
+    return client
+
+
+@pytest.fixture
+def dfu(mock_ble_client: MagicMock) -> LegacyDFU:
+    """A LegacyDFU instance wired to the mock BleakClient."""
+    return LegacyDFU(mock_ble_client)
