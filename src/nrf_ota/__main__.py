@@ -18,8 +18,10 @@ import argparse
 import asyncio
 import sys
 
+from bleak import BleakScanner, BLEDevice
+
 from . import perform_dfu
-from .scan import scan_for_devices
+from .scan import _CB_MACOS
 
 
 def main() -> None:
@@ -52,15 +54,23 @@ async def _async_main() -> None:
 
     # ── Scan ──────────────────────────────────────────────────────────────
     print(f"Scanning for BLE devices ({args.timeout:.0f} s)…")
-    devices = await scan_for_devices(timeout=args.timeout)
+    raw_scan = await BleakScanner.discover(timeout=args.timeout, return_adv=True, **_CB_MACOS)
+
+    # Prefer the live advertisement name over the cached device.name so that after a
+    # successful flash the device shows as "OD*" rather than the stale "AdaDFU".
+    devices: list[tuple[BLEDevice, str]] = [
+        (dev, adv.local_name or dev.name or dev.address)
+        for dev, adv in raw_scan.values()
+        if adv.local_name or dev.name
+    ]
 
     if not devices:
         print("No named BLE devices found.", file=sys.stderr)
         sys.exit(1)
 
     print(f"\nFound {len(devices)} device(s):")
-    for i, d in enumerate(devices):
-        print(f"  [{i}] {d.name}  ({d.address})")
+    for i, (dev, name) in enumerate(devices):
+        print(f"  [{i}] {name}  ({dev.address})")
 
     # ── Device picker ─────────────────────────────────────────────────────
     selected_index: int | None = None
@@ -78,8 +88,8 @@ async def _async_main() -> None:
             print("\nAborted.")
             sys.exit(0)
 
-    selected = devices[selected_index]
-    print(f"\nSelected: {selected.name}  ({selected.address})")
+    selected, selected_name = devices[selected_index]
+    print(f"\nSelected: {selected_name}  ({selected.address})")
 
     # ── DFU ───────────────────────────────────────────────────────────────
     last_pct = -1
@@ -103,7 +113,7 @@ async def _async_main() -> None:
     try:
         await perform_dfu(
             args.zip_path,
-            selected,
+            selected,  # BLEDevice
             on_progress=on_progress,
             on_log=on_log,
             packets_per_notification=args.prn,
