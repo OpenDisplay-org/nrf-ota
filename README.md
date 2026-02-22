@@ -17,7 +17,9 @@ pip install nrf-ota
 No install required — run directly with [uvx](https://docs.astral.sh/uv/):
 
 ```bash
-uvx nrf-ota firmware.zip
+uvx nrf-ota firmware.zip                             # interactive device picker
+uvx nrf-ota firmware.zip --device OD216205           # select by name (non-interactive)
+uvx nrf-ota firmware.zip --device FC:06:1C:C8:DE:47  # select by address
 ```
 
 Scans for nearby BLE devices, lets you pick one, and flashes the firmware. If the device is running application firmware the bootloader is triggered automatically.

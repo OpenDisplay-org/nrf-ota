@@ -50,6 +50,11 @@ async def _async_main() -> None:
         metavar="N",
         help=f"Packets per receipt notification (default: {_default_prn} on this platform).",
     )
+    parser.add_argument(
+        "--device",
+        metavar="ADDR_OR_NAME",
+        help="Skip the device picker. Pass a full Bluetooth address or exact device name (case-insensitive).",
+    )
     args = parser.parse_args()
 
     # ── Scan ──────────────────────────────────────────────────────────────
@@ -68,28 +73,46 @@ async def _async_main() -> None:
         print("No named BLE devices found.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\nFound {len(devices)} device(s):")
-    for i, (dev, name) in enumerate(devices):
-        print(f"  [{i}] {name}  ({dev.address})")
+    # ── --device matching (non-interactive) ───────────────────────────────
+    if args.device:
+        needle = args.device.strip().upper()
+        matches = [
+            (dev, name) for dev, name in devices
+            if dev.address.upper() == needle or name.upper() == needle
+        ]
+        if not matches:
+            print(f"No device found matching '{args.device}'.", file=sys.stderr)
+            print("\nAvailable devices:", file=sys.stderr)
+            for dev, name in devices:
+                print(f"  {name}  ({dev.address})", file=sys.stderr)
+            sys.exit(1)
 
-    # ── Device picker ─────────────────────────────────────────────────────
-    selected_index: int | None = None
-    while selected_index is None:
-        try:
-            raw = input(f"\nSelect device [0–{len(devices) - 1}]: ").strip()
-            idx = int(raw)
-            if 0 <= idx < len(devices):
-                selected_index = idx
-            else:
-                print(f"  Please enter a number between 0 and {len(devices) - 1}.")
-        except ValueError:
-            print("  Please enter a number.")
-        except (EOFError, KeyboardInterrupt):
-            print("\nAborted.")
-            sys.exit(0)
+        selected, selected_name = matches[0]
+        print(f"Selected: {selected_name}  ({selected.address})")
 
-    selected, selected_name = devices[selected_index]
-    print(f"\nSelected: {selected_name}  ({selected.address})")
+    else:
+        print(f"\nFound {len(devices)} device(s):")
+        for i, (dev, name) in enumerate(devices):
+            print(f"  [{i}] {name}  ({dev.address})")
+
+        # ── Device picker ──────────────────────────────────────────────────
+        selected_index: int | None = None
+        while selected_index is None:
+            try:
+                raw = input(f"\nSelect device [0–{len(devices) - 1}]: ").strip()
+                idx = int(raw)
+                if 0 <= idx < len(devices):
+                    selected_index = idx
+                else:
+                    print(f"  Please enter a number between 0 and {len(devices) - 1}.")
+            except ValueError:
+                print("  Please enter a number.")
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.")
+                sys.exit(0)
+
+        selected, selected_name = devices[selected_index]
+        print(f"\nSelected: {selected_name}  ({selected.address})")
 
     # ── DFU ───────────────────────────────────────────────────────────────
     last_pct = -1
