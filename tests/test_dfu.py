@@ -11,7 +11,7 @@ import pytest
 from bleak.backends.scanner import AdvertisementData
 
 from nrf_ota.dfu import LEGACY_DFU_SERVICE_UUID, DeviceNotFoundError, DFUError, LegacyDFU, parse_dfu_zip
-from nrf_ota.scan import find_dfu_target
+from nrf_ota.scan import find_dfu_target, trigger_bootloader
 
 
 def make_adv_data(
@@ -223,6 +223,31 @@ async def test_find_dfu_target_service_uuid_match() -> None:
     with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value=discover_result)):
         result = await find_dfu_target("SOME-UUID-THAT-WONT-MATCH", timeout=5.0)
     assert result.address == "AA:BB:CC:DD:EE:FF"
+
+
+# ── trigger_bootloader ────────────────────────────────────────────────────────
+
+
+async def test_trigger_bootloader_skips_when_live_name_is_dfu() -> None:
+    """Returns False immediately when live advertisement name contains 'DFU'."""
+    device = _make_ble_device("AA:BB:CC:DD:EE:FF", "OD355226")
+    adv = make_adv_data(local_name="AdaDFU")
+    scan_result = {device.address: (device, adv)}
+    with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value=scan_result)):
+        with patch("nrf_ota.scan.BleakClient") as mock_client_cls:
+            result = await trigger_bootloader(device)
+    assert result is False
+    mock_client_cls.assert_not_called()
+
+
+async def test_trigger_bootloader_skips_when_cached_name_suggests_dfu() -> None:
+    """Returns False (no connect) when device not visible but cached name implies DFU."""
+    device = _make_ble_device("AA:BB:CC:DD:EE:FF", "AdaDFU")
+    with patch("nrf_ota.scan.BleakScanner.discover", new=AsyncMock(return_value={})):
+        with patch("nrf_ota.scan.BleakClient") as mock_client_cls:
+            result = await trigger_bootloader(device)
+    assert result is False
+    mock_client_cls.assert_not_called()
 
 
 async def test_find_dfu_target_not_found() -> None:
