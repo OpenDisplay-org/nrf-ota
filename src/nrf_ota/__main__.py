@@ -21,6 +21,7 @@ import sys
 from bleak import BleakScanner, BLEDevice
 
 from . import perform_dfu
+from .dfu import DeviceNotFoundError, DFUError
 from .scan import _CB_MACOS
 
 
@@ -154,8 +155,20 @@ async def _async_main() -> None:
     except KeyboardInterrupt:
         print("\nAborted.")
         sys.exit(0)
-    except Exception as exc:
+    except DeviceNotFoundError as exc:
+        print(f"\nDevice not found: {exc}", file=sys.stderr)
+        print("  → Press reset on the device and try again.", file=sys.stderr)
+        sys.exit(1)
+    except DFUError as exc:
         print(f"\nDFU failed: {exc}", file=sys.stderr)
+        msg = str(exc).lower()
+        if "0x06" in msg or "operation failed" in msg:
+            print("  → Try a lower --prn value (e.g. --prn 4).", file=sys.stderr)
+        if "0x06" in msg or "operation failed" in msg or "timeout" in msg:
+            print("  → The bootloader may still be active — run the command again immediately.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as exc:
+        print(f"\nUnexpected error: {exc}", file=sys.stderr)
         sys.exit(1)
 
 
