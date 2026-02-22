@@ -44,7 +44,7 @@ _CB_MACOS: dict[str, Any] = {"cb": {"use_bdaddr": True}} if sys.platform == "dar
 # transfers at PRN≥10 (status 0x06).  PRN=8 is confirmed stable on macOS.
 _DEFAULT_PRN: int = 8 if sys.platform == "darwin" else 10
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "perform_dfu",
